@@ -1,0 +1,183 @@
+version: '3.8'
+
+services:
+  # Servicio principal HistorialBlockchain
+  historial-blockchain:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: historial-blockchain-api
+    ports:
+      - "8081:8081"
+    environment:
+      # AWS Configuration
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - DYNAMODB_TABLE_HISTORIAL=${DYNAMODB_TABLE_HISTORIAL:-historial_transparencia}
+      - DYNAMODB_TABLE_EVENTO=${DYNAMODB_TABLE_EVENTO:-evento_verificado}
+      - DYNAMODB_ENDPOINT=${DYNAMODB_ENDPOINT:-http://dynamodb-local:8000}
+      
+      # Kafka Configuration
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      - KAFKA_CONSUMER_GROUP=${KAFKA_CONSUMER_GROUP:-historial-blockchain-consumer}
+      - KAFKA_TOPIC=${KAFKA_TOPIC:-event.transaccion.blockchain.registered}
+      - KAFKA_PRODUCER_TOPIC_RECONSTRUIDO=${KAFKA_PRODUCER_TOPIC_RECONSTRUIDO:-event.historial.reconstruido}
+      - KAFKA_PRODUCER_TOPIC_INCONSISTENCIA=${KAFKA_PRODUCER_TOPIC_INCONSISTENCIA:-event.historial.inconsistencia}
+      
+      # Blockchain Configuration
+      - ALCHEMY_API_KEY=${ALCHEMY_API_KEY}
+      - BLOCKCHAIN_RPC_URL=${BLOCKCHAIN_RPC_URL}
+      - BLOCKCHAIN_NETWORK=${BLOCKCHAIN_NETWORK:-sepolia}
+      - BLOCKCHAIN_TIMEOUT=${BLOCKCHAIN_TIMEOUT:-30}
+      
+      # Server Configuration
+      - SERVER_PORT=8081
+      - GIN_MODE=${GIN_MODE:-debug}
+      
+      # Feature Flags
+      - ENABLE_STRICT_VERIFICATION=${ENABLE_STRICT_VERIFICATION:-true}
+      - MAX_RETRIES=${MAX_RETRIES:-3}
+      - RETRY_DELAY=${RETRY_DELAY:-1000}
+      
+      # Rate Limiting
+      - RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS:-100}
+      - RATE_LIMIT_WINDOW=${RATE_LIMIT_WINDOW:-60}
+      
+      # JWT Configuration
+      - JWT_PUBLIC_KEY=${JWT_PUBLIC_KEY}
+    depends_on:
+      - kafka
+      - dynamodb-local
+    networks:
+      - blockchain-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Services de développement local
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: zookeeper-historial
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - blockchain-network
+    restart: unless-stopped
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: kafka-historial
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_DELETE_TOPIC_ENABLE: "true"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - blockchain-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Kafka UI para gestión y monitoreo
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui-historial
+    depends_on:
+      - kafka
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - blockchain-network
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+  dynamodb-local:
+    image: amazon/dynamodb-local:latest
+    container_name: dynamodb-local-historial
+    ports:
+      - "8000:8000"
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-dbPath", "/data"]
+    volumes:
+      - dynamodb_data:/data
+    networks:
+      - blockchain-network
+    restart: unless-stopped
+    profiles:
+      - local
+
+  # Interface Web pour DynamoDB (optionnel)
+  dynamodb-admin:
+    image: aaronshaf/dynamodb-admin
+    container_name: dynamodb-admin-historial
+    ports:
+      - "8001:8001"
+    environment:
+      DYNAMO_ENDPOINT: http://dynamodb-local:8000
+      AWS_REGION: us-east-1
+    depends_on:
+      - dynamodb-local
+    networks:
+      - blockchain-network
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+  # Prometheus pour métriques (optionnel)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus-historial
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - blockchain-network
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+networks:
+  blockchain-network:
+    driver: bridge
+    name: historial-blockchain-network
+
+volumes:
+  kafka_data:
+    driver: local
+  dynamodb_data:
+    driver: local
+  prometheus_data:
+    driver: local

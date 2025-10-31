@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: historial-blockchain
+  labels:
+    app: historial-blockchain
+    version: v1
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: historial-blockchain
+  template:
+    metadata:
+      labels:
+        app: historial-blockchain
+        version: v1
+      annotations:
+        sidecar.istio.io/inject: "true"
+    spec:
+      containers:
+        - name: app
+          image: localhost:5000/historial-blockchain:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8081
+              name: http
+          env:
+            - name: AWS_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: historial-config
+                  key: aws-region
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: historial-config
+                  key: kafka-bootstrap-servers
+            - name: DYNAMODB_TABLE_HISTORIAL
+              valueFrom:
+                configMapKeyRef:
+                  name: historial-config
+                  key: dynamodb-table-historial
+            - name: DYNAMODB_TABLE_EVENTO
+              valueFrom:
+                configMapKeyRef:
+                  name: historial-config
+                  key: dynamodb-table-evento
+            - name: BLOCKCHAIN_RPC_URL
+              valueFrom:
+                secretKeyRef:
+                  name: historial-secrets
+                  key: blockchain-rpc-url
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: historial-secrets
+                  key: aws-access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: historial-secrets
+                  key: aws-secret-access-key
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: historial-secrets
+                  key: encryption-key
+            - name: JWT_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: historial-secrets
+                  key: jwt-public-key
+            - name: SERVER_PORT
+              value: "8081"
+            - name: GIN_MODE
+              value: "release"
+            - name: ENABLE_STRICT_VERIFICATION
+              value: "true"
+            - name: BLOCKCHAIN_TIMEOUT
+              value: "30"
+            - name: MAX_RETRIES
+              value: "3"
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1001
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      securityContext:
+        fsGroup: 1001
