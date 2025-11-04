@@ -209,51 +209,16 @@ func (hs *HistorialService) ReconstruirHistorialAsync(ctx context.Context, idPro
 
 // ObtenerHistorial récupère un historial existant
 func (hs *HistorialService) ObtenerHistorial(ctx context.Context, idProducto, lote string) (*models.HistorialTransparencia, error) {
-	// Pour les tests, retourner des données simulées
-	// Dans une vraie implémentation : return hs.dynamoDBService.ObtenerHistorial(ctx, idProducto, lote)
-	
-	now := time.Now()
-	historial := &models.HistorialTransparencia{
-		IDProducto:           idProducto,
-		Lote:                lote,
-		NombreProducto:      "Paracetamol 500mg",
-		Fabricante:          "PharmaCorp",
-		EstadoActual:        models.EstadoConforme,
-		ValidacionBlockchain: true,
-		UltimoCheck:        now,
-		Metadata: map[string]string{
-			"categoria": "analgesico",
-			"origen":    "nacional",
-		},
-		CreatedAt: now.Add(-time.Hour * 24 * 30), // Créé il y a 30 jours
-		UpdatedAt: now,
-	}
-	
-	return historial, nil
+	// Utiliser la vraie base de données DynamoDB
+	return hs.dynamoDBService.ObtenerHistorial(ctx, idProducto, lote)
 }
 
 // VerificarEvento vérifie un événement spécifique
 func (hs *HistorialService) VerificarEvento(ctx context.Context, idProducto, idEvento string) (*models.EventoVerificado, error) {
-	// Pour les tests, retourner des données simulées
-	// Dans une vraie implémentation : evento, err := hs.dynamoDBService.ObtenerEvento(ctx, idProducto, idEvento)
-	
-	now := time.Now()
-	evento := &models.EventoVerificado{
-		IDEvento:              idEvento,
-		IDProducto:           idProducto,
-		TipoEvento:           "INGRESO",
-		Fecha:                now.Add(-time.Hour * 24), // Il y a 1 jour
-		Ubicacion:            "Almacén Central",
-		DatosEvento: map[string]interface{}{
-			"cantidad":  100,
-			"lote":      "L001",
-			"proveedor": "PROV001",
-		},
-		HashEvento:           "0xabc123def456...",
-		ReferenciaBlockchain: "0x123abc456def...",
-		ResultadoVerificacion: models.VerificacionOK,
-		Observaciones:        "Evento verificado correctamente",
-		CreatedAt:           now.Add(-time.Hour * 24),
+	// Utiliser la vraie base de données DynamoDB
+	evento, err := hs.dynamoDBService.ObtenerEvento(ctx, idProducto, idEvento)
+	if err != nil {
+		return nil, fmt.Errorf("erreur récupération événement: %w", err)
 	}
 	
 	if evento == nil {
@@ -417,32 +382,27 @@ func (hs *HistorialService) ObtenerEventosPorProducto(ctx context.Context, idPro
 
 // ListarInconsistencias récupère les inconsistances avec filtrage et pagination
 func (hs *HistorialService) ListarInconsistencias(ctx context.Context, severidad string, page, limit int) ([]models.Inconsistencia, error) {
-	// Calculer l'offset pour la pagination
-	offset := (page - 1) * limit
+	// Utiliser la vraie base de données DynamoDB pour récupérer les inconsistances
+	historiales, err := hs.dynamoDBService.ListarHistorialesInconsistentes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("erreur récupération inconsistances: %w", err)
+	}
 
-	// Pour l'instant, simulons des données d'inconsistances
-	// Dans une vraie implémentation, on ferait appel au DynamoDB service
-	inconsistencias := []models.Inconsistencia{
-		{
-			ID:           "INC001",
-			IDProducto:   "PROD123",
-			IDEvento:     "EVT456",
-			Tipo:         "HASH_MISMATCH",
-			Severidad:    "ALTA",
-			Descripcion:  "Hash de transaction ne correspond pas à celui stocké",
-			FechaDeteccion: "2024-10-31T14:00:00Z",
-			Resolu:       false,
-		},
-		{
-			ID:           "INC002",
-			IDProducto:   "PROD456",
-			IDEvento:     "EVT789",
-			Tipo:         "TIMESTAMP_INCONSISTENT",
-			Severidad:    "MEDIA",
-			Descripcion:  "Timestamp d'événement postérieur à l'événement suivant",
-			FechaDeteccion: "2024-10-31T13:30:00Z",
-			Resolu:       false,
-		},
+	// Convertir les historiales en inconsistances (logique métier à adapter selon vos besoins)
+	var inconsistencias []models.Inconsistencia
+	for _, historial := range historiales {
+		if !historial.ValidacionBlockchain {
+			inconsistencias = append(inconsistencias, models.Inconsistencia{
+				ID:           fmt.Sprintf("INC_%s", historial.IDProducto),
+				IDProducto:   historial.IDProducto,
+				IDEvento:     "", // À récupérer depuis les événements si nécessaire
+				Tipo:         "VALIDATION_FAILED",
+				Severidad:    "ALTA",
+				Descripcion:  "Validation blockchain échouée",
+				FechaDeteccion: historial.UpdatedAt.Format(time.RFC3339),
+				Resolu:       false,
+			})
+		}
 	}
 
 	// Filtrer par sévérité si spécifié
@@ -454,6 +414,7 @@ func (hs *HistorialService) ListarInconsistencias(ctx context.Context, severidad
 	}
 
 	// Appliquer la pagination
+	offset := (page - 1) * limit
 	start := offset
 	if start >= len(inconsistenciasFiltradas) {
 		return []models.Inconsistencia{}, nil

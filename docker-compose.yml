@@ -1,4 +1,4 @@
-version: '3.8'
+
 
 services:
   # Servicio principal HistorialBlockchain
@@ -46,9 +46,9 @@ services:
       
       # JWT Configuration
       - JWT_PUBLIC_KEY=${JWT_PUBLIC_KEY}
-    depends_on:
-      - kafka
-      - dynamodb-local
+    # depends_on:
+      # - kafka
+      # - dynamodb-local
     networks:
       - blockchain-network
     restart: unless-stopped

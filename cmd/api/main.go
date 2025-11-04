@@ -199,7 +199,18 @@ func initDynamoDBClient(cfg *appConfig.Config) (*dynamodb.Client, error) {
 		return nil, fmt.Errorf("impossible de charger la configuration AWS: %w", err)
 	}
 
-	return dynamodb.NewFromConfig(awsConfig), nil
+	// Créer le client DynamoDB
+	dynamoClient := dynamodb.NewFromConfig(awsConfig)
+
+	// Si un endpoint local est configuré, l'utiliser
+	if cfg.DynamoDBEndpoint != "" {
+		dynamoClient = dynamodb.NewFromConfig(awsConfig, func(o *dynamodb.Options) {
+			o.BaseEndpoint = aws.String(cfg.DynamoDBEndpoint)
+		})
+		log.Printf("🔧 Utilisation de l'endpoint DynamoDB local: %s", cfg.DynamoDBEndpoint)
+	}
+
+	return dynamoClient, nil
 }
 
 // setupRoutes configure les routes de l'application

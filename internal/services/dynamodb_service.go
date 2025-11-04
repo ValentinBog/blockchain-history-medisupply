@@ -53,12 +53,11 @@ func (ddb *DynamoDBService) GuardarHistorial(ctx context.Context, historial *mod
 
 // ObtenerHistorial récupère un historial par ID produit et lote
 func (ddb *DynamoDBService) ObtenerHistorial(ctx context.Context, idProducto, lote string) (*models.HistorialTransparencia, error) {
+	// La table utilise seulement idProducto comme clé primaire
+	// Le paramètre lote peut être utilisé pour filtrer après récupération si nécessaire
+
 	key := map[string]types.AttributeValue{
 		"idProducto": &types.AttributeValueMemberS{Value: idProducto},
-	}
-	
-	if lote != "" {
-		key["lote"] = &types.AttributeValueMemberS{Value: lote}
 	}
 
 	result, err := ddb.client.GetItem(ctx, &dynamodb.GetItemInput{
@@ -78,6 +77,11 @@ func (ddb *DynamoDBService) ObtenerHistorial(ctx context.Context, idProducto, lo
 	err = attributevalue.UnmarshalMap(result.Item, &historial)
 	if err != nil {
 		return nil, fmt.Errorf("erreur unmarshalling historial: %w", err)
+	}
+
+	// Si un lote spécifique est demandé, vérifier que ça correspond
+	if lote != "" && historial.Lote != lote {
+		return nil, nil // Lote ne correspond pas
 	}
 
 	return &historial, nil
