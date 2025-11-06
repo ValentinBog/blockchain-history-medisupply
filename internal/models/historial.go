@@ -146,6 +146,23 @@ const (
 	TaskStatusFailed     = "failed"
 )
 
+// BlockchainEvent représente un événement stocké dans la table blockcahin_medysupyly
+type BlockchainEvent struct {
+	IDTransaction        string            `json:"idTransaction" dynamodbav:"idTransaction"`
+	IDProducto           string            `json:"idProducto" dynamodbav:"idProducto"`
+	TipoEvento           string            `json:"tipoEvento" dynamodbav:"tipoEvento"`
+	FechaEvento          string            `json:"fechaEvento" dynamodbav:"fechaEvento"`
+	ActorEmisor          string            `json:"actorEmisor" dynamodbav:"actorEmisor"`
+	Estado               string            `json:"estado" dynamodbav:"estado"`
+	DatosEvento          string            `json:"datosEvento" dynamodbav:"datosEvento"`
+	HashEvento           string            `json:"hashEvento" dynamodbav:"hashEvento"`
+	FirmaDigital         string            `json:"firmaDigital" dynamodbav:"firmaDigital"`
+	DirectionBlockchain  string            `json:"directionBlockchain" dynamodbav:"directionBlockchain"`
+	IPFSCid              string            `json:"ipfsCid" dynamodbav:"ipfsCid"`
+	CreatedAt            string            `json:"createdAt" dynamodbav:"createdAt"`
+	UpdatedAt            string            `json:"updatedAt" dynamodbav:"updatedAt"`
+}
+
 // Inconsistencia représente une inconsistance détectée
 type Inconsistencia struct {
 	ID             string `json:"id" dynamodbav:"id"`

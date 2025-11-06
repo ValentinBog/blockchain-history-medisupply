@@ -15,17 +15,19 @@ import (
 
 // DynamoDBService gère les interactions avec DynamoDB
 type DynamoDBService struct {
-	client              *dynamodb.Client
-	historialTableName  string
-	eventoTableName     string
+	client                     *dynamodb.Client
+	historialTableName         string
+	eventoTableName           string
+	blockchainEventsTableName string
 }
 
 // NewDynamoDBService crée une nouvelle instance de DynamoDBService
-func NewDynamoDBService(client *dynamodb.Client, historialTableName, eventoTableName string) *DynamoDBService {
+func NewDynamoDBService(client *dynamodb.Client, historialTableName, eventoTableName, blockchainEventsTableName string) *DynamoDBService {
 	return &DynamoDBService{
-		client:             client,
-		historialTableName: historialTableName,
-		eventoTableName:    eventoTableName,
+		client:                     client,
+		historialTableName:         historialTableName,
+		eventoTableName:           eventoTableName,
+		blockchainEventsTableName: blockchainEventsTableName,
 	}
 }
 
@@ -243,4 +245,46 @@ func (ddb *DynamoDBService) ListarHistorialesInconsistentes(ctx context.Context)
 	}
 
 	return historiales, nil
+}
+
+// ObtenerEventosBlockchainPorProducto récupère les événements de la table blockcahin_medysupyly pour un produit
+func (ddb *DynamoDBService) ObtenerEventosBlockchainPorProducto(ctx context.Context, idProducto string) ([]models.BlockchainEvent, error) {
+	result, err := ddb.client.Scan(ctx, &dynamodb.ScanInput{
+		TableName:        aws.String(ddb.blockchainEventsTableName),
+		FilterExpression: aws.String("idProducto = :idProducto"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":idProducto": &types.AttributeValueMemberS{Value: idProducto},
+		},
+	})
+	
+	if err != nil {
+		return nil, fmt.Errorf("erreur récupération événements blockchain: %w", err)
+	}
+
+	var eventos []models.BlockchainEvent
+	err = attributevalue.UnmarshalListOfMaps(result.Items, &eventos)
+	if err != nil {
+		return nil, fmt.Errorf("erreur unmarshalling événements blockchain: %w", err)
+	}
+
+	return eventos, nil
+}
+
+// ObtenerTousEventosBlockchain récupère tous les événements de la table blockcahin_medysupyly
+func (ddb *DynamoDBService) ObtenerTousEventosBlockchain(ctx context.Context) ([]models.BlockchainEvent, error) {
+	result, err := ddb.client.Scan(ctx, &dynamodb.ScanInput{
+		TableName: aws.String(ddb.blockchainEventsTableName),
+	})
+	
+	if err != nil {
+		return nil, fmt.Errorf("erreur récupération tous les événements blockchain: %w", err)
+	}
+
+	var eventos []models.BlockchainEvent
+	err = attributevalue.UnmarshalListOfMaps(result.Items, &eventos)
+	if err != nil {
+		return nil, fmt.Errorf("erreur unmarshalling tous les événements blockchain: %w", err)
+	}
+
+	return eventos, nil
 }

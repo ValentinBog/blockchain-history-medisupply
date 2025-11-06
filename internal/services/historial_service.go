@@ -51,7 +51,14 @@ func (hs *HistorialService) ReconstruirHistorial(ctx context.Context, idProducto
 		}
 	}
 
-	// Récupérer tous les événements pour ce produit
+	// ÉTAPE 1: Synchroniser les données depuis blockchain_medysupply
+	log.Printf("🔄 Synchronisation depuis la table blockchain_medysupply pour produit: %s", idProducto)
+	err := hs.SynchroniserDepuisBlockchain(ctx, idProducto)
+	if err != nil {
+		return nil, fmt.Errorf("erreur synchronisation blockchain: %w", err)
+	}
+
+	// ÉTAPE 2: Récupérer tous les événements pour ce produit (après synchronisation)
 	eventos, err := hs.dynamoDBService.ObtenerEventos(ctx, idProducto)
 	if err != nil {
 		return nil, fmt.Errorf("erreur récupération événements: %w", err)
@@ -209,13 +216,29 @@ func (hs *HistorialService) ReconstruirHistorialAsync(ctx context.Context, idPro
 
 // ObtenerHistorial récupère un historial existant
 func (hs *HistorialService) ObtenerHistorial(ctx context.Context, idProducto, lote string) (*models.HistorialTransparencia, error) {
-	// Utiliser la vraie base de données DynamoDB
+	// ÉTAPE 1: Synchroniser les données depuis blockchain_medysupply avant de récupérer l'historial
+	log.Printf("🔄 Synchronisation depuis la table blockchain_medysupply pour produit: %s", idProducto)
+	err := hs.SynchroniserDepuisBlockchain(ctx, idProducto)
+	if err != nil {
+		log.Printf("⚠️ Erreur synchronisation blockchain pour %s: %v", idProducto, err)
+		// Continuer même en cas d'erreur de synchronisation pour ne pas bloquer la lecture
+	}
+
+	// ÉTAPE 2: Utiliser la vraie base de données DynamoDB
 	return hs.dynamoDBService.ObtenerHistorial(ctx, idProducto, lote)
 }
 
 // VerificarEvento vérifie un événement spécifique
 func (hs *HistorialService) VerificarEvento(ctx context.Context, idProducto, idEvento string) (*models.EventoVerificado, error) {
-	// Utiliser la vraie base de données DynamoDB
+	// ÉTAPE 1: Synchroniser les données depuis blockchain_medysupply avant de vérifier
+	log.Printf("🔄 Synchronisation depuis la table blockchain_medysupply pour produit: %s", idProducto)
+	err := hs.SynchroniserDepuisBlockchain(ctx, idProducto)
+	if err != nil {
+		log.Printf("⚠️ Erreur synchronisation blockchain pour %s: %v", idProducto, err)
+		// Continuer même en cas d'erreur de synchronisation pour ne pas bloquer la vérification
+	}
+
+	// ÉTAPE 2: Utiliser la vraie base de données DynamoDB
 	evento, err := hs.dynamoDBService.ObtenerEvento(ctx, idProducto, idEvento)
 	if err != nil {
 		return nil, fmt.Errorf("erreur récupération événement: %w", err)
@@ -324,38 +347,55 @@ func (hs *HistorialService) ObtenerEventosPorProducto(ctx context.Context, idPro
 	// Calculer l'offset pour la pagination
 	offset := (page - 1) * limit
 
-	// Pour l'instant, simulons des données d'événements
-	// Dans une vraie implémentation, on ferait appel au DynamoDB service
-	// Parse dates
-	fecha1, _ := time.Parse("2006-01-02T15:04:05Z", "2024-01-15T10:30:00Z")
-	fecha2, _ := time.Parse("2006-01-02T15:04:05Z", "2024-02-15T14:20:00Z")
+	// Récupérer les événements réels depuis la table blockcahin_medysupyly
+	blockchainEvents, err := hs.dynamoDBService.ObtenerEventosBlockchainPorProducto(ctx, idProducto)
+	if err != nil {
+		return nil, fmt.Errorf("erreur récupération événements blockchain: %w", err)
+	}
 
-	eventos := []models.EventoVerificado{
-		{
-			IDEvento:             "EVT456",
-			IDProducto:          idProducto,
-			TipoEvento:          "INGRESO",
-			Fecha:               fecha1,
-			ReferenciaBlockchain: "0x123abc...",
-			ResultadoVerificacion: "VERIFICADO",
-			DatosEvento: map[string]interface{}{
-				"cantidad":  100,
-				"lote":      "L001",
-				"proveedor": "PROV001",
-			},
-		},
-		{
-			IDEvento:             "EVT789",
-			IDProducto:          idProducto,
-			TipoEvento:          "EGRESO",
-			Fecha:               fecha2,
-			ReferenciaBlockchain: "0x456def...",
-			ResultadoVerificacion: "VERIFICADO",
-			DatosEvento: map[string]interface{}{
-				"cantidad": 50,
-				"destino":  "HOSPITAL_001",
-			},
-		},
+	// Convertir les BlockchainEvent en EventoVerificado
+	var eventos []models.EventoVerificado
+	for _, blockchainEvent := range blockchainEvents {
+		// Parser la date
+		fecha, err := time.Parse("2006-01-02T15:04:05.999999999Z", blockchainEvent.FechaEvento)
+		if err != nil {
+			// Essayer d'autres formats de date si nécessaire
+			fecha, err = time.Parse(time.RFC3339, blockchainEvent.FechaEvento)
+			if err != nil {
+				log.Printf("⚠️ Erreur parsing date pour événement %s: %v", blockchainEvent.IDTransaction, err)
+				fecha = time.Now() // Fallback
+			}
+		}
+
+		// Parser les données de l'événement JSON
+		var datosEvento map[string]interface{}
+		if blockchainEvent.DatosEvento != "" {
+			if err := json.Unmarshal([]byte(blockchainEvent.DatosEvento), &datosEvento); err != nil {
+				log.Printf("⚠️ Erreur parsing données événement %s: %v", blockchainEvent.IDTransaction, err)
+				datosEvento = make(map[string]interface{})
+			}
+		} else {
+			datosEvento = make(map[string]interface{})
+		}
+
+		evento := models.EventoVerificado{
+			IDEvento:              blockchainEvent.IDTransaction,
+			IDProducto:           blockchainEvent.IDProducto,
+			TipoEvento:           blockchainEvent.TipoEvento,
+			Fecha:                fecha,
+			DatosEvento:          datosEvento,
+			HashEvento:           blockchainEvent.HashEvento,
+			ReferenciaBlockchain: blockchainEvent.DirectionBlockchain,
+			ResultadoVerificacion: models.VerificacionOK, // Par défaut, considérer comme vérifié
+			CreatedAt:            fecha,
+		}
+
+		// Ajouter des informations supplémentaires dans les métadonnées
+		evento.DatosEvento["actorEmisor"] = blockchainEvent.ActorEmisor
+		evento.DatosEvento["estado"] = blockchainEvent.Estado
+		evento.DatosEvento["ipfsCid"] = blockchainEvent.IPFSCid
+
+		eventos = append(eventos, evento)
 	}
 
 	// Filtrer par type d'événement si spécifié
@@ -426,4 +466,147 @@ func (hs *HistorialService) ListarInconsistencias(ctx context.Context, severidad
 	}
 
 	return inconsistenciasFiltradas[start:end], nil
+}
+
+// SynchroniserDepuisBlockchain synchronise les événements depuis la table blockchain_medysupply
+func (hs *HistorialService) SynchroniserDepuisBlockchain(ctx context.Context, idProducto string) error {
+	log.Printf("🔄 Synchronisation des événements blockchain pour produit: %s", idProducto)
+
+	// Récupérer les événements blockchain pour ce produit
+	eventosBlockchain, err := hs.dynamoDBService.ObtenerEventosBlockchainPorProducto(ctx, idProducto)
+	if err != nil {
+		return fmt.Errorf("erreur récupération événements blockchain: %w", err)
+	}
+
+	if len(eventosBlockchain) == 0 {
+		log.Printf("⚠️ Aucun événement blockchain trouvé pour le produit: %s", idProducto)
+		return nil
+	}
+
+	log.Printf("📊 Trouvé %d événements blockchain pour le produit %s", len(eventosBlockchain), idProducto)
+
+	// Pour chaque événement blockchain, créer ou mettre à jour l'événement vérifié
+	for _, eventoBC := range eventosBlockchain {
+		eventoVerificado, err := hs.convertirBlockchainEventEnEventoVerificado(eventoBC)
+		if err != nil {
+			log.Printf("⚠️ Erreur conversion événement %s: %v", eventoBC.IDTransaction, err)
+			continue
+		}
+
+		// Vérifier si l'événement existe déjà
+		existingEvento, err := hs.dynamoDBService.ObtenerEvento(ctx, eventoVerificado.IDProducto, eventoVerificado.IDEvento)
+		if err != nil {
+			log.Printf("⚠️ Erreur vérification événement existant %s: %v", eventoVerificado.IDEvento, err)
+			continue
+		}
+
+		if existingEvento == nil {
+			// Sauvegarder le nouvel événement
+			err = hs.dynamoDBService.GuardarEvento(ctx, eventoVerificado)
+			if err != nil {
+				log.Printf("⚠️ Erreur sauvegarde événement %s: %v", eventoVerificado.IDEvento, err)
+				continue
+			}
+			log.Printf("✅ Événement synchronisé: %s", eventoVerificado.IDEvento)
+		} else {
+			log.Printf("📋 Événement déjà existant: %s", eventoVerificado.IDEvento)
+		}
+	}
+
+	return nil
+}
+
+// convertirBlockchainEventEnEventoVerificado convertit un BlockchainEvent en EventoVerificado
+func (hs *HistorialService) convertirBlockchainEventEnEventoVerificado(eventoBC models.BlockchainEvent) (*models.EventoVerificado, error) {
+	// Parser la date
+	fechaEvento, err := time.Parse(time.RFC3339, eventoBC.FechaEvento)
+	if err != nil {
+		// Essayer un autre format si nécessaire
+		fechaEvento, err = time.Parse("2006-01-02T15:04:05.000000000Z", eventoBC.FechaEvento)
+		if err != nil {
+			return nil, fmt.Errorf("erreur parsing date événement: %w", err)
+		}
+	}
+
+	// Parser les données d'événement JSON
+	var datosEvento map[string]interface{}
+	if eventoBC.DatosEvento != "" {
+		err = json.Unmarshal([]byte(eventoBC.DatosEvento), &datosEvento)
+		if err != nil {
+			return nil, fmt.Errorf("erreur parsing données événement: %w", err)
+		}
+	} else {
+		datosEvento = make(map[string]interface{})
+	}
+
+	// Ajouter des informations supplémentaires aux données
+	datosEvento["actorEmisor"] = eventoBC.ActorEmisor
+	datosEvento["estado"] = eventoBC.Estado
+	datosEvento["ipfsCid"] = eventoBC.IPFSCid
+
+	// Déterminer le résultat de vérification basé sur l'état
+	var resultadoVerificacion string
+	switch eventoBC.Estado {
+	case "pendiente":
+		resultadoVerificacion = "PENDING"
+	case "confirmado":
+		resultadoVerificacion = models.VerificacionOK
+	case "echec", "failed":
+		resultadoVerificacion = models.VerificacionNotFound
+	default:
+		resultadoVerificacion = "UNKNOWN"
+	}
+
+	eventoVerificado := &models.EventoVerificado{
+		IDProducto:            eventoBC.IDProducto,
+		IDEvento:              eventoBC.IDTransaction, // Utiliser IDTransaction comme IDEvento
+		TipoEvento:            eventoBC.TipoEvento,
+		Fecha:                 fechaEvento,
+		Ubicacion:             eventoBC.ActorEmisor, // Utiliser l'acteur émetteur comme localisation
+		DatosEvento:           datosEvento,
+		HashEvento:            eventoBC.HashEvento,
+		ReferenciaBlockchain:  eventoBC.DirectionBlockchain,
+		ResultadoVerificacion: resultadoVerificacion,
+		Observaciones:         fmt.Sprintf("Synchronisé depuis blockchain_medysupply - État: %s", eventoBC.Estado),
+		RawPayload:            eventoBC.DatosEvento,
+		CreatedAt:            time.Now(),
+	}
+
+	return eventoVerificado, nil
+}
+
+// SynchroniserTousLesEventosBlockchain synchronise tous les événements blockchain
+func (hs *HistorialService) SynchroniserTousLesEventosBlockchain(ctx context.Context) error {
+	log.Printf("🔄 Synchronisation globale des événements blockchain")
+
+	// Récupérer tous les événements blockchain
+	eventosBlockchain, err := hs.dynamoDBService.ObtenerTousEventosBlockchain(ctx)
+	if err != nil {
+		return fmt.Errorf("erreur récupération tous les événements blockchain: %w", err)
+	}
+
+	if len(eventosBlockchain) == 0 {
+		log.Printf("⚠️ Aucun événement blockchain trouvé")
+		return nil
+	}
+
+	log.Printf("📊 Trouvé %d événements blockchain au total", len(eventosBlockchain))
+
+	// Grouper par produit
+	eventosPorProducto := make(map[string][]models.BlockchainEvent)
+	for _, evento := range eventosBlockchain {
+		eventosPorProducto[evento.IDProducto] = append(eventosPorProducto[evento.IDProducto], evento)
+	}
+
+	// Synchroniser par produit
+	for idProducto, eventos := range eventosPorProducto {
+		log.Printf("🔄 Synchronisation pour produit: %s (%d événements)", idProducto, len(eventos))
+		err := hs.SynchroniserDepuisBlockchain(ctx, idProducto)
+		if err != nil {
+			log.Printf("⚠️ Erreur synchronisation produit %s: %v", idProducto, err)
+			continue
+		}
+	}
+
+	return nil
 }

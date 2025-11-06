@@ -16,6 +16,7 @@ type Config struct {
 	AWSSecretKey      string
 	DynamoDBTableHistorial string
 	DynamoDBTableEvento    string
+	DynamoDBTableBlockchainEvents string
 	DynamoDBEndpoint       string
 	UseAWSSecrets     bool
 
@@ -68,6 +69,7 @@ func LoadConfig() (*Config, error) {
 		AWSSecretKey:          os.Getenv("AWS_SECRET_ACCESS_KEY"),
 		DynamoDBTableHistorial: getEnvOrDefault("DYNAMODB_TABLE_HISTORIAL", "historial_transparencia"),
 		DynamoDBTableEvento:    getEnvOrDefault("DYNAMODB_TABLE_EVENTO", "evento_verificado"),
+		DynamoDBTableBlockchainEvents: getEnvOrDefault("DYNAMODB_TABLE_BLOCKCHAIN_EVENTS", "blockcahin_medysupyly"),
 		DynamoDBEndpoint:       os.Getenv("DYNAMODB_ENDPOINT"),
 		UseAWSSecrets:         getEnvAsBool("USE_AWS_SECRETS", false),
 

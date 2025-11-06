@@ -52,6 +52,7 @@ func main() {
 		dynamoClient,
 		cfg.DynamoDBTableHistorial,
 		cfg.DynamoDBTableEvento,
+		cfg.DynamoDBTableBlockchainEvents,
 	)
 
 	// 2. Initialiser Blockchain Service
